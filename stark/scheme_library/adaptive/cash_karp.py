@@ -1,0 +1,249 @@
+from __future__ import annotations
+
+from stark.audit import Auditor
+from stark.control import StepController, Tolerance
+from stark.contracts import Derivative, IntervalLike, State, Workbench
+from stark.scheme_butcher_tableau import ButcherTableau
+from stark.scheme_identity import SchemeIdentity
+from stark.scheme_parts import SchemeParts
+
+
+RKCK_TABLEAU = ButcherTableau(
+    c=(0.0, 1.0 / 5.0, 3.0 / 10.0, 3.0 / 5.0, 1.0, 7.0 / 8.0),
+    a=(
+        (),
+        (1.0 / 5.0,),
+        (3.0 / 40.0, 9.0 / 40.0),
+        (3.0 / 10.0, -9.0 / 10.0, 6.0 / 5.0),
+        (-11.0 / 54.0, 5.0 / 2.0, -70.0 / 27.0, 35.0 / 27.0),
+        (
+            1631.0 / 55296.0,
+            175.0 / 512.0,
+            575.0 / 13824.0,
+            44275.0 / 110592.0,
+            253.0 / 4096.0,
+        ),
+    ),
+    b=(37.0 / 378.0, 0.0, 250.0 / 621.0, 125.0 / 594.0, 0.0, 512.0 / 1771.0),
+    order=5,
+    b_embedded=(
+        2825.0 / 27648.0,
+        0.0,
+        18575.0 / 48384.0,
+        13525.0 / 55296.0,
+        277.0 / 14336.0,
+        1.0 / 4.0,
+    ),
+    embedded_order=4,
+)
+RKCK_A = RKCK_TABLEAU.a
+RKCK_B_HIGH = RKCK_TABLEAU.b
+RKCK_B_LOW = RKCK_TABLEAU.b_embedded
+assert RKCK_B_LOW is not None
+RKCK_B_HIGH_NZ = (RKCK_B_HIGH[0], RKCK_B_HIGH[2], RKCK_B_HIGH[3], RKCK_B_HIGH[5])
+RKCK_B_ERR_NZ = (
+    RKCK_B_HIGH[0] - RKCK_B_LOW[0],
+    RKCK_B_HIGH[2] - RKCK_B_LOW[2],
+    RKCK_B_HIGH[3] - RKCK_B_LOW[3],
+    RKCK_B_HIGH[4] - RKCK_B_LOW[4],
+    RKCK_B_HIGH[5] - RKCK_B_LOW[5],
+)
+
+
+class SchemeCashKarp:
+    """Adaptive Runge-Kutta Cash-Karp 5(4) scheme."""
+
+    __slots__ = ("controller", "derivative", "error", "k1", "k2", "k3", "k4", "k5", "k6", "parts", "stage", "trial")
+
+    identity = SchemeIdentity("RKCK", "Cash Karp")
+    tableau = RKCK_TABLEAU
+
+    def __init__(
+        self,
+        derivative: Derivative,
+        workbench: Workbench,
+        controller: StepController | None = None,
+    ) -> None:
+        translation_probe = workbench.allocate_translation()
+        Auditor.require_scheme_inputs(derivative, workbench, translation_probe)
+        self.derivative = derivative
+        self.parts = SchemeParts(workbench, translation_probe)
+        self.controller = controller if controller is not None else StepController()
+        self.k1 = translation_probe
+        parts = self.parts
+        self.stage = parts.allocate_state_buffer()
+        self.trial, self.error, self.k2, self.k3, self.k4, self.k5, self.k6 = parts.allocate_translation_buffers(7)
+
+    @classmethod
+    def display_tableau(cls) -> str:
+        return cls.identity.display_tableau(cls.tableau)
+
+    @property
+    def short_name(self) -> str:
+        return self.identity.short_name
+
+    @property
+    def full_name(self) -> str:
+        return self.identity.full_name
+
+    def __repr__(self) -> str:
+        return self.identity.repr_for(type(self).__name__, self.tableau)
+
+    def __str__(self) -> str:
+        return self.display_tableau()
+
+    def __format__(self, format_spec: str) -> str:
+        return format(str(self), format_spec)
+
+    def set_apply_delta_safety(self, enabled: bool) -> None:
+        self.parts.set_apply_delta_safety(enabled)
+
+    def snapshot_state(self, state: State) -> State:
+        return self.parts.snapshot_state(state)
+
+    def __call__(self, interval: IntervalLike, state: State, tolerance: Tolerance) -> float:
+        remaining = interval.stop - interval.present
+        if remaining <= 0.0:
+            return 0.0
+
+        parts = self.parts
+        derivative = self.derivative
+        scale = parts.scale
+        combine2 = parts.combine2
+        combine3 = parts.combine3
+        combine4 = parts.combine4
+        combine5 = parts.combine5
+        apply_delta = parts.apply_delta
+        controller = self.controller
+        controller_safety = controller.safety
+        controller_min_factor = controller.min_factor
+        controller_max_factor = controller.max_factor
+        controller_error_exponent = controller.error_exponent
+        stage = self.stage
+        trial_buffer = self.trial
+        error_buffer = self.error
+        k1 = self.k1
+        k2 = self.k2
+        k3 = self.k3
+        k4 = self.k4
+        k5 = self.k5
+        k6 = self.k6
+        dt = interval.step if interval.step <= remaining else remaining
+
+        while True:
+            derivative(state, k1)
+
+            trial = scale(trial_buffer, dt * RKCK_A[1][0], k1)
+            trial(state, stage)
+            derivative(stage, k2)
+
+            trial = combine2(
+                trial_buffer,
+                dt * RKCK_A[2][0],
+                k1,
+                dt * RKCK_A[2][1],
+                k2,
+            )
+            trial(state, stage)
+            derivative(stage, k3)
+
+            trial = combine3(
+                trial_buffer,
+                dt * RKCK_A[3][0],
+                k1,
+                dt * RKCK_A[3][1],
+                k2,
+                dt * RKCK_A[3][2],
+                k3,
+            )
+            trial(state, stage)
+            derivative(stage, k4)
+
+            trial = combine4(
+                trial_buffer,
+                dt * RKCK_A[4][0],
+                k1,
+                dt * RKCK_A[4][1],
+                k2,
+                dt * RKCK_A[4][2],
+                k3,
+                dt * RKCK_A[4][3],
+                k4,
+            )
+            trial(state, stage)
+            derivative(stage, k5)
+
+            trial = combine5(
+                trial_buffer,
+                dt * RKCK_A[5][0],
+                k1,
+                dt * RKCK_A[5][1],
+                k2,
+                dt * RKCK_A[5][2],
+                k3,
+                dt * RKCK_A[5][3],
+                k4,
+                dt * RKCK_A[5][4],
+                k5,
+            )
+            trial(state, stage)
+            derivative(stage, k6)
+
+            delta_high = combine4(
+                trial_buffer,
+                dt * RKCK_B_HIGH_NZ[0],
+                k1,
+                dt * RKCK_B_HIGH_NZ[1],
+                k3,
+                dt * RKCK_B_HIGH_NZ[2],
+                k4,
+                dt * RKCK_B_HIGH_NZ[3],
+                k6,
+            )
+            error = combine5(
+                error_buffer,
+                dt * RKCK_B_ERR_NZ[0],
+                k1,
+                dt * RKCK_B_ERR_NZ[1],
+                k3,
+                dt * RKCK_B_ERR_NZ[2],
+                k4,
+                dt * RKCK_B_ERR_NZ[3],
+                k5,
+                dt * RKCK_B_ERR_NZ[4],
+                k6,
+            )
+            err = error.norm()
+            error_ratio = tolerance.ratio(err, delta_high.norm())
+
+            if error_ratio <= 1.0:
+                break
+
+            if error_ratio == 0.0:
+                factor = controller_max_factor
+            else:
+                factor = controller_safety * (1.0 / error_ratio) ** controller_error_exponent
+                factor = min(controller_max_factor, max(controller_min_factor, factor))
+            dt = dt * factor
+            if dt <= 0.0:
+                raise RuntimeError("RKCK step size underflowed to zero.")
+            if dt > remaining:
+                dt = remaining
+
+        accepted_dt = dt
+        remaining_after = interval.stop - (interval.present + accepted_dt)
+        if remaining_after <= 0.0:
+            interval.step = 0.0
+        elif error_ratio == 0.0:
+            interval.step = min(accepted_dt * controller_max_factor, remaining_after)
+        else:
+            factor = controller_safety * (1.0 / error_ratio) ** controller_error_exponent
+            factor = min(controller_max_factor, max(controller_min_factor, factor))
+            interval.step = min(accepted_dt * factor, remaining_after)
+        apply_delta(delta_high, state)
+        return accepted_dt
+
+
+SchemeRKCK = SchemeCashKarp
+
+__all__ = ["RKCK_TABLEAU", "SchemeCashKarp", "SchemeRKCK"]

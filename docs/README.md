@@ -1,0 +1,292 @@
+# STARK Functionality Guide
+
+This page is a compact map of the public functionality in STARK. It is meant
+to answer two questions:
+
+- what can I use out of the box?
+- where can I plug in my own problem-specific code?
+
+For a worked narrative example, start with
+[`examples/three_body_stark.ipynb`](../examples/three_body_stark.ipynb).
+
+## Core Idea
+
+STARK integrates rich mutable Python state objects by separating the nonlinear
+state from the linear increments used by Runge-Kutta schemes.
+
+The main pieces are:
+
+- `State`: your own problem object.
+- `Translation`: a linear update that can be added, scaled, measured, and
+  applied to a state.
+- `Derivative`: a callable `derivative(state, out)` that writes the time
+  derivative into a translation object.
+- `Workbench`: an object that allocates blank states/translations and copies
+  states.
+- `Scheme`: a one-step integration method.
+- `Advance`: couples a scheme to tolerances and performs one accepted step.
+- `integrate`: runs repeated `Advance` calls over an interval.
+- `Auditor`: checks that the objects satisfy the STARK contracts before a long
+  run.
+
+The standard import path is:
+
+```python
+from stark import Advance, Auditor, Interval, Tolerance, integrate
+```
+
+## Integration
+
+Use `Interval` to describe the current time, proposed step, and stop time:
+
+```python
+interval = Interval(present=0.0, step=1.0e-3, stop=1.0)
+```
+
+Create an `Advance` object from a scheme and tolerance:
+
+```python
+advance = Advance(scheme, tolerance=Tolerance(atol=1.0e-8, rtol=1.0e-6))
+```
+
+Then integrate in either snapshot mode or live mode:
+
+```python
+for interval_snapshot, state_snapshot in integrate(advance, interval, state):
+    ...
+```
+
+Snapshot mode yields copied states, so collected trajectories are stable. Live
+mode yields the original mutable objects and is useful for tight loops:
+
+```python
+for live_interval, live_state in integrate.live(advance, interval, state):
+    ...
+```
+
+Both modes accept checkpoints. An integer gives equally spaced output times;
+an iterable gives explicit absolute times:
+
+```python
+for output_interval, output_state in integrate(advance, interval, state, checkpoints=100):
+    ...
+
+for output_interval, output_state in integrate.live(
+    advance,
+    interval,
+    state,
+    checkpoints=[0.1, 0.25, 0.5, 1.0],
+):
+    ...
+```
+
+Checkpoints are useful for plots and animations: the solver may adapt internally
+while the user only observes chosen output times.
+
+## Built-In Schemes
+
+The scheme library is available from `stark.scheme_library`.
+
+Adaptive embedded schemes:
+
+| Class | Method |
+| --- | --- |
+| `SchemeBogackiShampine` | Bogacki-Shampine 3(2) |
+| `SchemeCashKarp` | Cash-Karp 5(4) |
+| `SchemeRKCK` | Alias for Cash-Karp |
+| `SchemeDormandPrince` | Dormand-Prince 5(4) |
+| `SchemeFehlberg45` | Fehlberg 4(5) |
+| `SchemeTsitouras5` | Tsitouras 5(4) |
+
+Fixed-step schemes:
+
+| Class | Method |
+| --- | --- |
+| `SchemeEuler` | Forward Euler |
+| `SchemeHeun` | Heun |
+| `SchemeKutta3` | Kutta third-order |
+| `SchemeMidpoint` | Explicit midpoint |
+| `SchemeRalston` | Ralston |
+| `SchemeRK4` | Classical fourth-order Runge-Kutta |
+| `SchemeRK38` | 3/8-rule Runge-Kutta |
+| `SchemeSSPRK33` | SSP RK33 |
+
+For clarity, the physical subpackages are also importable:
+
+```python
+from stark.scheme_library.adaptive import SchemeDormandPrince
+from stark.scheme_library.fixed_step import SchemeRK4
+```
+
+Compatibility modules remain available, so existing imports such as
+`from stark.scheme_library.dormand_prince import SchemeDormandPrince` continue
+to work.
+
+## User State Contracts
+
+The `Translation` object is the main adapter between user code and STARK. A
+translation must provide:
+
+- `__call__(origin, result)`: apply the translation to `origin` and write into
+  `result`.
+- `norm()`: return a scalar size used for adaptive error control.
+- `__add__(other)`: generic translation addition.
+- `__rmul__(scalar)`: generic scalar multiplication.
+
+The `Workbench` must provide:
+
+- `allocate_state()`: return a blank state object.
+- `copy_state(dst, src)`: overwrite `dst` with `src`.
+- `allocate_translation()`: return a blank translation object.
+
+The `Derivative` is usually the thinnest adapter:
+
+```python
+def derivative(state, out):
+    out.position[:] = state.velocity
+    out.velocity[:] = acceleration_from_existing_code(state)
+```
+
+Use `Auditor` before a long solve:
+
+```python
+audit = Auditor(
+    state=state,
+    derivative=derivative,
+    translation=workbench.allocate_translation(),
+    workbench=workbench,
+    interval=interval,
+    scheme=scheme,
+    tolerance=tolerance,
+)
+print(audit)
+audit.raise_if_invalid()
+```
+
+## Fast Translation Paths
+
+The generic translation fallback uses `__add__` and `__rmul__`. That is simple
+and expressive, but it may allocate many temporary objects. For array-backed
+or performance-sensitive problems, translations can expose optimized
+linear-combination kernels.
+
+Attach a `linear_combine` list to the translation class:
+
+```python
+def scale_array(out, a, x):
+    out.values[:] = a * x.values
+    return out
+
+
+def combine2_array(out, a0, x0, a1, x1):
+    out.values[:] = a0 * x0.values + a1 * x1.values
+    return out
+
+
+class ArrayTranslation:
+    linear_combine = [scale_array, combine2_array]
+
+    def __init__(self, values):
+        self.values = values
+
+    def __call__(self, origin, result):
+        result.values[:] = origin.values + self.values
+
+    def norm(self):
+        return float((self.values * self.values).sum() ** 0.5)
+
+    def __add__(self, other):
+        return ArrayTranslation(self.values + other.values)
+
+    def __rmul__(self, scalar):
+        return ArrayTranslation(scalar * self.values)
+```
+
+The entries are:
+
+- `linear_combine[0]`: `scale(out, a, x)`
+- `linear_combine[1]`: `combine2(out, a0, x0, a1, x1)`
+- `linear_combine[2]`: `combine3(out, a0, x0, a1, x1, a2, x2)`
+- and so on up to `combine7`.
+
+If only `scale` and `combine2` are supplied, STARK builds the higher-arity
+combinations from `combine2` and scratch translations allocated by the
+workbench. For best performance, provide fused `combine3`, `combine4`, ...
+kernels directly. The benchmarks use this hook with Numba-jitted kernels.
+
+Fast paths should obey the same aliasing rule as translation application: the
+output buffer may be one of the input buffers, so kernels should be correct for
+in-place use.
+
+## Custom Schemes
+
+`Advance` accepts any object that satisfies the `SchemeLike` contract. A custom
+scheme does not need to inherit from a STARK base class.
+
+The minimal scheme interface is:
+
+```python
+class MyScheme:
+    def __call__(self, interval, state, tolerance):
+        ...
+        return accepted_dt
+
+    def snapshot_state(self, state):
+        ...
+
+    def set_apply_delta_safety(self, enabled):
+        ...
+```
+
+The `__call__` method should:
+
+- choose a step no larger than `interval.stop - interval.present`;
+- mutate `state` by one accepted step;
+- update `interval.step` to the next proposed step;
+- return the accepted step size.
+
+`Advance` will then increment `interval.present` by the returned step size.
+
+For built-in-style schemes, the common pattern is to own a `SchemeParts`
+instance. `SchemeParts` resolves the workbench, scratch states, scratch
+translations, translation application, and linear-combination fast paths:
+
+```python
+from stark import SchemeParts
+
+
+class MyScheme:
+    def __init__(self, derivative, workbench):
+        self.derivative = derivative
+        self.parts = SchemeParts(workbench, workbench.allocate_translation())
+```
+
+The richer `Scheme` protocol also exposes readable metadata, tableaus, and
+string formatting. That is useful for library-quality schemes, but not required
+for `Advance`.
+
+Run `Auditor(..., scheme=my_scheme)` to check a custom scheme alongside the
+state, translation, workbench, interval, and tolerance objects.
+
+## Benchmarks
+
+The benchmark reports live under `benchmarks/` and are intended to be readable
+examples of idiomatic STARK, SciPy, and Diffrax implementations of the same
+problems.
+
+Install benchmark dependencies with:
+
+```powershell
+python -m pip install -e ".[benchmarks]"
+```
+
+Run:
+
+```powershell
+python -m benchmarks.brusselator_2d.report
+python -m benchmarks.fput.report
+```
+
+The STARK benchmark implementations intentionally use fast translation paths so
+the reports show both the generic interface and the performance-oriented
+extension point.

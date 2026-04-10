@@ -1,0 +1,16 @@
+cff-version: 1.2.0
+message: "If you use stark-ode in research or published work, please cite it using this metadata."
+type: software
+title: "stark-ode"
+abstract: "State Translation Adaptive Runge Kutta for integrating user-defined Python state types."
+authors:
+  - family-names: "Fellows"
+    given-names: "Jonathan M."
+version: "0.1.0"
+date-released: "2026-04-10"
+license: "MIT"
+keywords:
+  - "ODE"
+  - "Runge-Kutta"
+  - "adaptive time stepping"
+  - "scientific computing"

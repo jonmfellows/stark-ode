@@ -1,0 +1,72 @@
+"""Built-in Runge-Kutta schemes.
+
+The library is organised by stepping behaviour:
+
+- `adaptive` contains embedded schemes with error estimates and step control.
+- `fixed_step` contains classic explicit fixed-step schemes.
+
+Scheme classes and tableaus are re-exported here for the common import style:
+`from stark.scheme_library import SchemeCashKarp`.
+"""
+
+from stark.scheme_library.adaptive import (
+    BS23_TABLEAU,
+    RKCK_TABLEAU,
+    RKDP_TABLEAU,
+    RKF45_TABLEAU,
+    TSIT5_TABLEAU,
+    SchemeBogackiShampine,
+    SchemeCashKarp,
+    SchemeDormandPrince,
+    SchemeFehlberg45,
+    SchemeRKCK,
+    SchemeTsitouras5,
+)
+from stark.scheme_library.fixed_step import (
+    EULER_TABLEAU,
+    HEUN_TABLEAU,
+    KUTTA3_TABLEAU,
+    MIDPOINT_TABLEAU,
+    RALSTON_TABLEAU,
+    RK4_TABLEAU,
+    RK38_TABLEAU,
+    SSPRK33_TABLEAU,
+    SchemeEuler,
+    SchemeHeun,
+    SchemeKutta3,
+    SchemeMidpoint,
+    SchemeRK4,
+    SchemeRK38,
+    SchemeRalston,
+    SchemeSSPRK33,
+)
+
+__all__ = [
+    "BS23_TABLEAU",
+    "EULER_TABLEAU",
+    "HEUN_TABLEAU",
+    "KUTTA3_TABLEAU",
+    "MIDPOINT_TABLEAU",
+    "RALSTON_TABLEAU",
+    "RK4_TABLEAU",
+    "RK38_TABLEAU",
+    "RKCK_TABLEAU",
+    "RKDP_TABLEAU",
+    "RKF45_TABLEAU",
+    "SSPRK33_TABLEAU",
+    "TSIT5_TABLEAU",
+    "SchemeBogackiShampine",
+    "SchemeCashKarp",
+    "SchemeDormandPrince",
+    "SchemeEuler",
+    "SchemeFehlberg45",
+    "SchemeHeun",
+    "SchemeKutta3",
+    "SchemeMidpoint",
+    "SchemeRalston",
+    "SchemeRK4",
+    "SchemeRK38",
+    "SchemeRKCK",
+    "SchemeSSPRK33",
+    "SchemeTsitouras5",
+]

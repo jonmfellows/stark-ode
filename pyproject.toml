@@ -1,0 +1,60 @@
+[build-system]
+requires = ["setuptools>=69", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "stark-ode"
+version = "0.1.0"
+description = "State Translation Adaptive Runge Kutta"
+readme = "README.md"
+license = { file = "LICENSE" }
+authors = [
+    { name = "Jonathan M. Fellows" },
+]
+requires-python = ">=3.11"
+keywords = ["ode", "runge-kutta", "numerics", "simulation"]
+classifiers = [
+    "Development Status :: 2 - Pre-Alpha",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering :: Mathematics",
+]
+
+[project.optional-dependencies]
+dev = [
+    "build>=1.2.2",
+    "numpy>=1.26",
+    "numba>=0.60",
+    "pytest>=8.0",
+    "scipy>=1.13",
+    "wheel>=0.43",
+]
+examples = [
+    "matplotlib>=3.8",
+]
+notebooks = [
+    "ipykernel>=6",
+    "jupyterlab>=4",
+    "matplotlib>=3.8",
+    "nbformat>=5",
+]
+benchmarks = [
+    "diffrax>=0.6",
+    "jax[cpu]>=0.4",
+    "numba>=0.60",
+    "numpy>=1.26",
+    "scipy>=1.13",
+]
+
+[tool.setuptools.packages.find]
+include = ["stark*", "benchmarks*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra -m \"not slow\""
+markers = [
+    "slow: longer-running profiling and benchmark-oriented tests",
+]
