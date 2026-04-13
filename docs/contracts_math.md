@@ -175,50 +175,6 @@ R : T^m -> T^m
 
 by writing into a supplied `Block`.
 
-## Linearization and the Linearizer contract
-
-Newton-style implicit methods need the derivative of the nonlinear residual.
-That in turn depends on the derivative of the user-supplied ODE right-hand
-side.
-
-If the ODE is
-
-```text
-x' = f(x)
-```
-
-then the user supplies a `Linearizer` giving the action of the Jacobian
-
-```text
-J(x) = Df(x)
-```
-
-on a translation `tau in T`:
-
-```text
-tau |-> J(x) tau
-```
-
-STARK asks for this in operator form rather than as a dense matrix. In code:
-
-```python
-linearizer(out_operator, state)
-```
-
-where `out_operator(result, translation)` computes the Jacobian image. This is
-the matrix-free form used throughout modern iterative methods and sparse
-numerics.
-
-The pencil-and-paper task for the user is therefore:
-
-1. derive the Jacobian action of `f`
-2. express that action on your chosen translation representation
-3. write it as an `Operator`
-
-That is enough for STARK to build the linearized operators needed by implicit
-schemes, such as `I - h J(x)` for backward Euler or the stage operators in
-ESDIRK methods.
-
 ## Linear operators and inverters
 
 Once linearization enters the picture, STARK needs a notion of linear operator
@@ -245,6 +201,71 @@ A delta = b
 ```
 
 This is the role of `InverterLike`.
+
+## Linearization and the Linearizer contract
+
+Newton-style implicit methods need the derivative of the nonlinear residual.
+That in turn depends on the derivative of the user-supplied ODE right-hand
+side with respect to its state argument.
+
+If the ODE is
+
+```text
+x' = f(x)
+```
+
+then the relevant object is the derivative of `f` at a state `x`. This is the
+[Jacobian](https://en.wikipedia.org/wiki/Jacobian_matrix_and_determinant), but
+in STARK it should be understood as a linear operator rather than as a dense
+matrix.
+
+For a small translation `delta in T`, the linear approximation is
+
+```text
+f(x + delta) = f(x) + J(x)[delta] + higher-order terms
+```
+
+where
+
+```text
+J(x) = Df(x)
+```
+
+and
+
+```text
+J(x) : T -> T
+```
+
+is a linear operator acting on translations.
+
+So the user supplies a `Linearizer` that gives the action
+
+```text
+delta |-> J(x)[delta]
+```
+
+without ever needing to materialize a full dense matrix.
+
+In code:
+
+```python
+linearizer(out_operator, state)
+```
+
+where `out_operator(result, translation)` computes the Jacobian image. This is
+the matrix-free form used throughout modern iterative methods and sparse
+numerics.
+
+The pencil-and-paper task for the user is therefore:
+
+1. derive the derivative of `f` with respect to its state argument
+2. express the Jacobian action `J(x)[delta]` on the chosen translation representation
+3. write that action as an `Operator`
+
+That is enough for STARK to build the linearized operators needed by implicit
+schemes, such as `I - h J(x)` for backward Euler or the stage operators in
+ESDIRK methods.
 
 ## Inner products and Krylov methods
 
